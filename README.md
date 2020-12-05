@@ -14,6 +14,8 @@ The following devices have been reported to work:
 | 048d     | 6004      | 0.03      | Integrated Technology Express, Inc.  | ITE Device(8291)  |
 | 048d     | ce00      | 0.03      | Integrated Technology Express, Inc.  | ITE Device(8291)  |
 
+The `048d:6005` USB device is also in the list of supported devices of this driver, however, it has not been tested, the vendor and product identifiers have been found on [linux-hardware.org](https://linux-hardware.org). If you have such device, and the driver works for you, please report it.
+
 You can use `lsusb` to determine if a compatible device is found on your system. If you believe your device should be supported, but it is not, please open an issue.
 
 # Dependencies
