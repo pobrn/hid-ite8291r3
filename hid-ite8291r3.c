@@ -123,9 +123,14 @@ static int ite8291r3_receive(struct ite8291r3_priv *p)
 	hid_dbg(p->hdev, "received: err = %d, buf = %*ph\n",
 		err, (int) sizeof(p->transfer_buf), p->transfer_buf);
 
-	if (err < 0)
+	if (err < 0) {
 		hid_err(p->hdev, "%s: get feature report failed: %d\n",
 			__func__, err);
+	} else if (err != (int) sizeof(p->transfer_buf)) {
+		hid_err(p->hdev, "%s: not enough data returned: got %d bytes, expected %d\n",
+			__func__, err, (int) sizeof(p->transfer_buf));
+		err = -ENODATA;
+	}
 
 	return err;
 }
@@ -144,9 +149,14 @@ static int ite8291r3_send(struct ite8291r3_priv *p)
 	hid_dbg(p->hdev, "sent: err = %d, buf = %*ph\n",
 		err, (int) sizeof(p->transfer_buf), p->transfer_buf);
 
-	if (err < 0)
+	if (err < 0) {
 		hid_err(p->hdev, "%s: set feature report failed: %d\n",
 			__func__, err);
+	} else if (err != (int) sizeof(p->transfer_buf)) {
+		hid_err(p->hdev, "%s: not enough data accepted: sent %d bytes, expected to send %d\n",
+			__func__, err, (int) sizeof(p->transfer_buf));
+		err = -ENOSPC;
+	}
 
 	return err;
 }
@@ -196,6 +206,39 @@ static int ite8291r3_set_brightness(struct ite8291r3_priv *p, uint8_t brightness
 	return err;
 }
 
+static int ite8291r3_get_firmware_version(struct ite8291r3_priv *p, uint8_t fw_ver[static 4])
+{
+	int err;
+
+	err = mutex_lock_interruptible(&p->lock);
+	if (err)
+		return err;
+
+	err = intf_get(p);
+	if (err)
+		goto out;
+
+	memset(p->transfer_buf, 0, sizeof(p->transfer_buf));
+	p->transfer_buf[1] = ITE8291R3_GET_FW_VERSION;
+
+	err = ite8291r3_send(p);
+	if (err < 0)
+		goto out_put_intf;
+
+	err = ite8291r3_receive(p);
+	if (err < 0)
+		goto out_put_intf;
+
+	memcpy(fw_ver, &p->transfer_buf[2], 4);
+	err = 0;
+
+out_put_intf:
+	intf_put(p);
+out:
+	mutex_unlock(&p->lock);
+	return err;
+}
+
 /* ========================================================================== */
 
 static enum led_brightness ite8291r3_led_cdev_get_brightness(struct led_classdev *led_cdev)
@@ -242,7 +285,6 @@ static int ite8291r3_led_cdev_set_brightness(struct led_classdev *led_cdev,
 	intf_put(p);
 out:
 	mutex_unlock(&p->lock);
-
 	return err;
 }
 
@@ -307,7 +349,6 @@ out_put_intf:
 	intf_put(p);
 out_unlock:
 	mutex_unlock(&p->lock);
-
 	return err;
 }
 
@@ -372,6 +413,7 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
 	struct usb_device *usb_dev = interface_to_usbdev(intf);
 	struct ite8291r3_priv *p;
+	uint8_t fw_ver[4];
 	int err;
 
 	hid_info(hdev, "probing\n");
@@ -414,25 +456,34 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 		 usb_dev->bus->busnum, usb_dev->portnum, usb_dev->devnum,
 		 intf->cur_altsetting->desc.bInterfaceNumber);
 
-	p->led.name                    = p->name;
-	p->led.max_brightness          = ITE8291R3_MAX_BRIGHTNESS;
-	p->led.brightness_get          = ite8291r3_led_cdev_get_brightness;
-	p->led.brightness_set_blocking = ite8291r3_led_cdev_set_brightness;
-	p->led.flags                   = LED_BRIGHT_HW_CHANGED;
-	p->led.groups                  = ite8291r3_led_groups;
 	p->hdev                        = hdev;
 	p->last_color                  = U32_MAX;
 
 	mutex_init(&p->lock);
 	timer_setup(&p->intf.put_timer, intf_put_timeout, 0);
 
-	hid_set_drvdata(hdev, p);
+	err = ite8291r3_get_firmware_version(p, fw_ver);
+	if (err) {
+		hid_err(hdev, "failed to query firmware version: %d\n", err);
+		goto out_free_priv;
+	}
+
+	hid_info(hdev, "firmware version: %*ph\n", (int) sizeof(fw_ver), fw_ver);
+
+	p->led.name                    = p->name;
+	p->led.max_brightness          = ITE8291R3_MAX_BRIGHTNESS;
+	p->led.brightness_get          = ite8291r3_led_cdev_get_brightness;
+	p->led.brightness_set_blocking = ite8291r3_led_cdev_set_brightness;
+	p->led.flags                   = LED_BRIGHT_HW_CHANGED;
+	p->led.groups                  = ite8291r3_led_groups;
 
 	err = led_classdev_register(&hdev->dev, &p->led);
 	if (err) {
 		hid_warn(hdev, "failed to register led: %d\n", err);
 		goto out_free_priv;
 	}
+
+	hid_set_drvdata(hdev, p);
 
 	return 0;
 
