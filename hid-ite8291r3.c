@@ -78,7 +78,7 @@ static void intf_put_timeout(struct timer_list *timer)
 }
 
 /* p->lock must be held */
-static inline int intf_get(struct ite8291r3_priv *p)
+static int intf_get(struct ite8291r3_priv *p)
 {
 	struct usb_interface *intf = to_usb_interface(p->hdev->dev.parent);
 	int err;
@@ -99,7 +99,7 @@ static inline int intf_get(struct ite8291r3_priv *p)
 }
 
 /* p->lock must be held */
-static inline void intf_put(struct ite8291r3_priv *p)
+static void intf_put(struct ite8291r3_priv *p)
 {
 	lockdep_assert_held(&p->lock);
 	mod_timer(&p->intf.put_timer, jiffies + msecs_to_jiffies(5000));
