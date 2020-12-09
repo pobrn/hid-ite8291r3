@@ -419,7 +419,7 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 	hid_info(hdev, "probing\n");
 
 	if (usb_dev->descriptor.bcdDevice != 0x0003) {
-		hid_warn(hdev, "unsupported bcdDevice (%#04x)",
+		hid_warn(hdev, "unsupported bcdDevice (%#06x)",
 			 (unsigned int) usb_dev->descriptor.bcdDevice);
 		return -ENODEV;
 	}
@@ -451,13 +451,8 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 		goto out_close;
 	}
 
-	snprintf(p->name, sizeof(p->name),
-		 "usb%d-%d-%d-%d::" LED_FUNCTION_KBD_BACKLIGHT,
-		 usb_dev->bus->busnum, usb_dev->portnum, usb_dev->devnum,
-		 intf->cur_altsetting->desc.bInterfaceNumber);
-
-	p->hdev                        = hdev;
-	p->last_color                  = U32_MAX;
+	p->hdev = hdev;
+	p->last_color = U32_MAX;
 
 	mutex_init(&p->lock);
 	timer_setup(&p->intf.put_timer, intf_put_timeout, 0);
@@ -469,6 +464,11 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 	}
 
 	hid_info(hdev, "firmware version: %*ph\n", (int) sizeof(fw_ver), fw_ver);
+
+	snprintf(p->name, sizeof(p->name),
+		 "usb%d-%d-%d-%d::" LED_FUNCTION_KBD_BACKLIGHT,
+		 usb_dev->bus->busnum, usb_dev->portnum, usb_dev->devnum,
+		 intf->cur_altsetting->desc.bInterfaceNumber);
 
 	p->led.name                    = p->name;
 	p->led.max_brightness          = ITE8291R3_MAX_BRIGHTNESS;
