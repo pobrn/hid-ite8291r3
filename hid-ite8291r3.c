@@ -6,6 +6,7 @@
 #include <linux/device.h>
 #include <linux/hid.h>
 #include <linux/init.h>
+#include <linux/jiffies.h>
 #include <linux/leds.h>
 #include <linux/limits.h>
 #include <linux/lockdep.h>
@@ -37,6 +38,8 @@
 
 #define ITE8291R3_REP_BRIGHTNESS_OFFSET 5
 
+#define ITE8291R3_FW_VERSION_LENGTH 4
+
 /* ========================================================================== */
 
 struct ite8291r3_priv {
@@ -48,7 +51,10 @@ struct ite8291r3_priv {
 		bool gotten;
 	} intf;
 
-	uint32_t last_color;
+	struct {
+		uint32_t color;
+		uint8_t brightness;
+	} state;
 
 	struct mutex lock; /* protects the whole object */
 
@@ -105,6 +111,29 @@ static void intf_put(struct ite8291r3_priv *p)
 	mod_timer(&p->intf.put_timer, jiffies + msecs_to_jiffies(5000));
 }
 
+static int lock_and_get(struct ite8291r3_priv *p)
+{
+	int err;
+
+	err = mutex_lock_interruptible(&p->lock);
+	if (err)
+		return err;
+
+	err = intf_get(p);
+	if (err)
+		mutex_unlock(&p->lock);
+
+	return err;
+}
+
+/* p->lock must be held */
+static void put_and_unlock(struct ite8291r3_priv *p)
+{
+	lockdep_assert_held(&p->lock);
+
+	intf_put(p);
+	mutex_unlock(&p->lock);
+}
 /* ========================================================================== */
 
 /* p->lock must be held, interface must be gotten */
@@ -210,13 +239,9 @@ static int ite8291r3_get_firmware_version(struct ite8291r3_priv *p, uint8_t fw_v
 {
 	int err;
 
-	err = mutex_lock_interruptible(&p->lock);
+	err = lock_and_get(p);
 	if (err)
 		return err;
-
-	err = intf_get(p);
-	if (err)
-		goto out;
 
 	memset(p->transfer_buf, 0, sizeof(p->transfer_buf));
 	p->transfer_buf[1] = ITE8291R3_GET_FW_VERSION;
@@ -229,15 +254,42 @@ static int ite8291r3_get_firmware_version(struct ite8291r3_priv *p, uint8_t fw_v
 	if (err < 0)
 		goto out_put_intf;
 
+	if (err < ITE8291R3_FW_VERSION_LENGTH + 2) {
+		err = -ENODATA;
+		goto out_put_intf;
+	}
+
 	memcpy(fw_ver, &p->transfer_buf[2], 4);
 	err = 0;
 
 out_put_intf:
-	intf_put(p);
-out:
-	mutex_unlock(&p->lock);
+	put_and_unlock(p);
 	return err;
 }
+
+/*
+static int ite8291r3_turn_off(struct ite8291r3_priv *p)
+{
+	int err;
+
+	err = lock_and_get(p);
+	if (err)
+		return err;
+
+	memset(p->transfer_buf, 0, sizeof(p->transfer_buf));
+	p->transfer_buf[1] = ITE8291R3_SET_EFFECT;
+	p->transfer_buf[2] = 0x01;
+
+	err = ite8291r3_send(p);
+	if (err < 0)
+		goto out_put_intf;
+
+	err = 0;
+
+	put_and_unlock(p);
+	return err;
+}
+*/
 
 /* ========================================================================== */
 
@@ -246,20 +298,14 @@ static enum led_brightness ite8291r3_led_cdev_get_brightness(struct led_classdev
 	struct ite8291r3_priv *p = container_of(led_cdev, struct ite8291r3_priv, led);
 	int err;
 
-	err = mutex_lock_interruptible(&p->lock);
+	err = lock_and_get(p);
 	if (err)
 		return err;
 
-	err = intf_get(p);
-	if (err)
-		goto out;
-
 	err = ite8291r3_get_brightness(p);
 
-	intf_put(p);
+	put_and_unlock(p);
 
-out:
-	mutex_unlock(&p->lock);
 	return err;
 }
 
@@ -272,19 +318,14 @@ static int ite8291r3_led_cdev_set_brightness(struct led_classdev *led_cdev,
 	if (led_cdev->flags & LED_UNREGISTERING)
 		return 0;
 
-	err = mutex_lock_interruptible(&p->lock);
+	err = lock_and_get(p);
 	if (err)
 		return err;
 
-	err = intf_get(p);
-	if (err)
-		goto out;
-
 	err = ite8291r3_set_brightness(p, value);
 
-	intf_put(p);
-out:
-	mutex_unlock(&p->lock);
+	put_and_unlock(p);
+
 	return err;
 }
 
@@ -298,13 +339,9 @@ static int ite8291r3_set_color(struct ite8291r3_priv *p, uint32_t color)
 	unsigned int row, col;
 	int err, brightness;
 
-	err = mutex_lock_interruptible(&p->lock);
+	err = lock_and_get(p);
 	if (err)
 		return err;
-
-	err = intf_get(p);
-	if (err)
-		goto out_unlock;
 
 	brightness = ite8291r3_get_brightness(p);
 	if (brightness < 0)
@@ -342,13 +379,12 @@ static int ite8291r3_set_color(struct ite8291r3_priv *p, uint32_t color)
 			goto out_put_intf;
 	}
 
-	p->last_color = color;
+	p->state.color = color;
 	err = 0;
 
 out_put_intf:
-	intf_put(p);
-out_unlock:
-	mutex_unlock(&p->lock);
+	put_and_unlock(p);
+
 	return err;
 }
 
@@ -366,7 +402,7 @@ static ssize_t color_show(struct device *dev,
 	if (err)
 		return err;
 
-	color = p->last_color;
+	color = p->state.color;
 
 	mutex_unlock(&p->lock);
 
@@ -408,6 +444,22 @@ ATTRIBUTE_GROUPS(ite8291r3_led);
 
 /* ========================================================================== */
 
+#if IS_ENABLED(CONFIG_PM)
+static int ite8291r3_suspend(struct hid_device *hdev, pm_message_t message)
+{
+	struct ite8291r3_priv *p = hid_get_drvdata(hdev);
+
+	return 0;
+}
+
+static int ite8291r3_resume(struct hid_device *hdev)
+{
+	struct ite8291r3_priv *p = hid_get_drvdata(hdev);
+
+	return 0;
+}
+#endif
+
 static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
@@ -433,7 +485,7 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 		goto out;
 	}
 
-	err = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
+	err = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
 	if (err) {
 		hid_warn(hdev, "hid_hw_start() failed: %d\n", err);
 		goto out;
@@ -452,7 +504,8 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 	}
 
 	p->hdev = hdev;
-	p->last_color = U32_MAX;
+	p->state.color = U32_MAX;
+	p->state.brightness = U8_MAX;
 
 	mutex_init(&p->lock);
 	timer_setup(&p->intf.put_timer, intf_put_timeout, 0);
@@ -466,7 +519,7 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 	hid_info(hdev, "firmware version: %*ph\n", (int) sizeof(fw_ver), fw_ver);
 
 	snprintf(p->name, sizeof(p->name),
-		 "usb%d-%d-%d-%d::" LED_FUNCTION_KBD_BACKLIGHT,
+		 "usb-%d-%d-%d-%d::" LED_FUNCTION_KBD_BACKLIGHT,
 		 usb_dev->bus->busnum, usb_dev->portnum, usb_dev->devnum,
 		 intf->cur_altsetting->desc.bInterfaceNumber);
 
@@ -531,6 +584,10 @@ static struct hid_driver ite8291r3_driver = {
 	.id_table = ite8291r3_device_ids,
 	.probe = ite8291r3_probe,
 	.remove = ite8291r3_remove,
+#if IS_ENABLED(CONFIG_PM)
+	.suspend = ite8291r3_suspend,
+	.resume = ite8291r3_resume,
+#endif
 };
 
 /* ========================================================================== */
