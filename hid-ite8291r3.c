@@ -343,8 +343,8 @@ static int ite8291r3_set_color(struct ite8291r3_priv *p, uint32_t color)
 	if (err)
 		return err;
 
-	brightness = ite8291r3_get_brightness(p);
-	if (brightness < 0)
+	err = brightness = ite8291r3_get_brightness(p);
+	if (err < 0)
 		goto out_put_intf;
 
 	memset(p->transfer_buf, 0, sizeof(p->transfer_buf));
