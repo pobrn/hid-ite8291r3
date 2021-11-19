@@ -444,22 +444,6 @@ ATTRIBUTE_GROUPS(ite8291r3_led);
 
 /* ========================================================================== */
 
-#if IS_ENABLED(CONFIG_PM)
-static int ite8291r3_suspend(struct hid_device *hdev, pm_message_t message)
-{
-	struct ite8291r3_priv *p = hid_get_drvdata(hdev);
-
-	return 0;
-}
-
-static int ite8291r3_resume(struct hid_device *hdev)
-{
-	struct ite8291r3_priv *p = hid_get_drvdata(hdev);
-
-	return 0;
-}
-#endif
-
 static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	struct usb_interface *intf = to_usb_interface(hdev->dev.parent);
@@ -584,10 +568,6 @@ static struct hid_driver ite8291r3_driver = {
 	.id_table = ite8291r3_device_ids,
 	.probe = ite8291r3_probe,
 	.remove = ite8291r3_remove,
-#if IS_ENABLED(CONFIG_PM)
-	.suspend = ite8291r3_suspend,
-	.resume = ite8291r3_resume,
-#endif
 };
 
 /* ========================================================================== */
