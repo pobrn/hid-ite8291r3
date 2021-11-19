@@ -511,7 +511,7 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 	p->led.max_brightness          = ITE8291R3_MAX_BRIGHTNESS;
 	p->led.brightness_get          = ite8291r3_led_cdev_get_brightness;
 	p->led.brightness_set_blocking = ite8291r3_led_cdev_set_brightness;
-	p->led.flags                   = LED_BRIGHT_HW_CHANGED;
+	p->led.flags                   = LED_BRIGHT_HW_CHANGED | LED_CORE_SUSPENDRESUME;
 	p->led.groups                  = ite8291r3_led_groups;
 
 	err = led_classdev_register(&hdev->dev, &p->led);
