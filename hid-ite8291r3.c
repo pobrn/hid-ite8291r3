@@ -569,6 +569,7 @@ static void ite8291r3_remove(struct hid_device *hdev)
 static const struct hid_device_id ite8291r3_device_ids[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ITE, 0x6004) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ITE, 0x6006) },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_ITE, 0x600b) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ITE, 0xce00) },
 	{ },
 };

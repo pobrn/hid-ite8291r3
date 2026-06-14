@@ -13,6 +13,7 @@ The following devices have been reported to work:
 |----------|-----------|-----------|--------------------------------------|-------------------|
 | 048d     | 6004      | 0.03      | Integrated Technology Express, Inc.  | ITE Device(8291)  |
 | 048d     | 6006      | 0.03      | Integrated Technology Express, Inc.  | ITE Device(8291)  |
+| 048d     | 600b      | 0.03      | Integrated Technology Express, Inc.  | ITE Device(8291)  |
 | 048d     | ce00      | 0.03      | Integrated Technology Express, Inc.  | ITE Device(8291)  |
 
 You can use `lsusb` to determine if a compatible device is found on your system. If you believe your device should be supported, but it is not, please open an issue.
