@@ -64,6 +64,7 @@ struct ite8291r3_priv {
 	struct {
 		uint32_t color;
 		uint8_t brightness;
+		uint32_t effect;
 	} state;
 
 	struct mutex lock; /* protects the whole object */
@@ -71,6 +72,25 @@ struct ite8291r3_priv {
 	char name[LED_MAX_NAME_SIZE];
 	u8 transfer_buf[ITE8291R3_HID_REPORT_LENGTH];
 	u8 row_color_buf[2 + 3 * ITE8291R3_NUM_COLS];
+};
+
+struct effect_t {
+	const char* name;
+	u32 code;
+};
+
+struct effect_t effects [] = {
+	{"breathing", 0x02},
+	{"wave", 0x03},
+	{"random", 0x04},
+	{"rainbow", 0x05},
+	{"ripple", 0x06},
+	{"marquee", 0x09},
+	{"raindrop",0x0a},
+	{"aurora", 0x0e},
+	{"fireworks", 0x11},
+	{"solid", 0x33},
+	{"none", 0}
 };
 
 /* ========================================================================== */
@@ -398,6 +418,41 @@ out_put_intf:
 	return err;
 }
 
+static int ite8291r3_set_effect(struct ite8291r3_priv *p, uint32_t effect)
+{
+	int err, brightness;
+
+	err = lock_and_get(p);
+	if (err)
+		return err;
+		
+	err = brightness = ite8291r3_get_brightness(p);
+	if (err < 0)
+		goto out_put_intf;
+
+	memset(p->transfer_buf, 0, sizeof(p->transfer_buf));
+	p->transfer_buf[1] = ITE8291R3_SET_EFFECT;
+	p->transfer_buf[2] = 0x02;
+	p->transfer_buf[3] = effect;
+	p->transfer_buf[4] = 5; //speed
+	p->transfer_buf[5] = brightness;
+	p->transfer_buf[6] = 4; //color
+	p->transfer_buf[7] = 0; //direction
+	p->transfer_buf[8] = 0x00; //save
+
+	err = ite8291r3_send(p);
+	if (err < 0)
+		goto out_put_intf;
+
+	p->state.effect = effect;
+	err = 0;
+
+out_put_intf:
+	put_and_unlock(p);
+
+	return err;
+}
+
 /* ========================================================================== */
 
 static ssize_t color_show(struct device *dev,
@@ -443,10 +498,75 @@ static ssize_t color_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
+static ssize_t effect_show(struct device *dev,
+			  struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct ite8291r3_priv *p = container_of(led_cdev, struct ite8291r3_priv, led);
+	uint32_t effect;
+	int err;
+
+	err = mutex_lock_interruptible(&p->lock);
+	if (err)
+		return err;
+
+	effect = p->state.effect;
+
+	mutex_unlock(&p->lock);
+
+	if (effect == U32_MAX)
+		return -ENODATA;
+
+	struct effect_t* q = effects;
+	const char *name = 0;
+	
+	while (q->code != 0) {
+		if (effect == q->code) {
+			name = q->name;
+			break;
+		}
+		q++;
+	}
+	
+	return sprintf(buf, "%s\n", name);
+}
+
+static ssize_t effect_store(struct device *dev, struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct ite8291r3_priv *p = container_of(led_cdev, struct ite8291r3_priv, led);
+	unsigned long value = 0;
+	int err;
+	
+	struct effect_t *q = effects;
+	
+	size_t len = strlen(buf);
+	if (len > 0) {
+		len--;
+	}
+	
+	while (q->code != 0) {
+		if (strncmp(buf, q->name, len) == 0) {
+			value = q->code;
+			break;
+		}
+		q++;
+	}
+
+	err = ite8291r3_set_effect(p, value);
+	if (err)
+		return err;
+
+	return count;
+}
+
 static DEVICE_ATTR_RW(color);
+static DEVICE_ATTR_RW(effect);
 
 static struct attribute *ite8291r3_led_attrs[] = {
 	&dev_attr_color.attr,
+	&dev_attr_effect.attr,
 	NULL
 };
 
@@ -500,6 +620,7 @@ static int ite8291r3_probe(struct hid_device *hdev, const struct hid_device_id *
 	p->hdev = hdev;
 	p->state.color = U32_MAX;
 	p->state.brightness = U8_MAX;
+	p->state.effect= U32_MAX;
 
 	mutex_init(&p->lock);
 	timer_setup(&p->intf.put_timer, intf_put_timeout, 0);
